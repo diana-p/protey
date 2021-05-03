@@ -1,5 +1,7 @@
 package com.test.protey.service;
 
+import com.test.protey.dto.PersonDTO;
+import com.test.protey.dto.PersonIdDTO;
 import com.test.protey.dto.PersonWithStatusDTO;
 import com.test.protey.exception.PersonNotFoundException;
 import com.test.protey.exception.ValidationException;
@@ -14,8 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.util.Date;
 
-import static java.util.Objects.isNull;
-
 @Service
 @Transactional
 @AllArgsConstructor
@@ -24,32 +24,37 @@ public class PersonService {
     private final PersonRepository personRepository;
     private final ThreadPoolTaskScheduler taskScheduler;
 
-    public Long savePerson(Person person) throws ValidationException {
-        validatePersonDto(person);
-        return personRepository.save(person).getPersonId();
+    public PersonIdDTO savePerson(PersonDTO personDTO) throws ValidationException {
+        Person person = personRepository.savePerson(fromPersonDtoToPerson(personDTO));
+        if (person.getStatus().toUpperCase().equals(Status.ONLINE.toString())) {
+            changeDelay(person.getPersonId());
+        }
+        return PersonIdDTO.builder().id(person.getPersonId()).build();
     }
 
-    private void validatePersonDto(Person person) throws ValidationException {
-        if (isNull(person)) {
-            throw new ValidationException("This person is incorrect");
-        }
-        if ((isNull(person.getFirstName()) || person.getFirstName().isEmpty()) &&
-                (isNull(person.getLastName()) || person.getLastName().isEmpty())) {
-            throw new ValidationException("Name is empty");
-        }
+    private Person fromPersonDtoToPerson(PersonDTO personDTO) {
+        Person person = new Person();
+        person.setFirstName(personDTO.getFirstName());
+        person.setLastName(personDTO.getLastName());
+        person.setEmail(personDTO.getEmail());
+        person.setPhoneNumber(personDTO.getPhoneNumber());
+        person.setStatus(Status.OFFLINE.toString());
+        person.setLastUpdate(new Date());
+        return person;
     }
 
     public Person findPersonById(Long personId) throws PersonNotFoundException {
-        return personRepository.findById(personId).orElseThrow(PersonNotFoundException::new);
+        return personRepository.findPersonById(personId).orElseThrow(PersonNotFoundException::new);
     }
 
     public PersonWithStatusDTO updatePersonStatus(Long personId, Status status) throws PersonNotFoundException {
-        Person person = personRepository.findById(personId).orElseThrow(PersonNotFoundException::new);
+        Person person = personRepository.findPersonById(personId).orElseThrow(PersonNotFoundException::new);
         String oldStatus = person.getStatus() != null ? person.getStatus() : Status.OFFLINE.toString();
         person.setStatus(status.toString());
         person.setLastUpdate(new Date());
+        personRepository.savePerson(person);
 
-        if (oldStatus.equals(Status.ONLINE.toString())) {
+        if (oldStatus.equals(Status.ONLINE.toString()) || status == Status.ONLINE) {
             changeDelay(personId);
         }
 
@@ -67,12 +72,12 @@ public class PersonService {
 
     private Runnable changeStatus(Long personId) {
         return () -> {
-            Person person = personRepository.findById(personId).orElseThrow(PersonNotFoundException::new);
+            Person person = personRepository.findPersonById(personId).orElseThrow(PersonNotFoundException::new);
 
             if (person.getLastUpdate().getTime() < new Date().getTime() - Duration.ofMinutes(5).toMillis()) {
                 person.setStatus(Status.AWAY.toString());
                 person.setLastUpdate(new Date());
-                personRepository.save(person);
+                personRepository.savePerson(person);
             }
         };
     }
